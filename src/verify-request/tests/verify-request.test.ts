@@ -33,8 +33,13 @@ describe('verifyRequest', () => {
         algorithm: 'HS256',
       });
 
-      const session = new Shopify.Session.Session(jwtSessionId);
-      session.shop = TEST_SHOP;
+      const session = new Shopify.Session.Session(
+        jwtSessionId,
+        TEST_SHOP,
+        'test_state',
+        true,
+      );
+      //session.shop = TEST_SHOP;
       session.expires = new Date(jwtPayload.exp * 1000);
       session.accessToken = 'test_token';
       session.scope = 'test_scope';
@@ -63,9 +68,12 @@ describe('verifyRequest', () => {
     it('calls next for offline sessions', async () => {
       const session = new Shopify.Session.Session(
         Shopify.Auth.getOfflineSessionId(TEST_SHOP),
+        TEST_SHOP,
+        'test_state',
+        false,
       );
-      session.shop = TEST_SHOP;
-      session.isOnline = false;
+      //session.shop = TEST_SHOP;
+      //session.isOnline = false;
       session.expires = new Date(Date.now() + 86400000);
       session.accessToken = 'test_token';
       session.scope = 'test_scope';
@@ -152,22 +160,27 @@ describe('verifyRequest', () => {
       const session = await Shopify.Context.SESSION_STORAGE.loadSession(
         jwtSessionId,
       );
-      session.scope = 'different_scope';
-      await Shopify.Utils.storeSession(session);
 
-      const verifyRequestMiddleware = verifyRequest({authRoute});
-      const next = jest.fn();
-      const ctx = createMockContext({
-        url: appUrl(TEST_SHOP),
-        redirect: jest.fn(),
-        headers: {authorization: `Bearer ${jwtToken}`},
-      });
+      if (session) {
+        session.scope = 'different_scope';
+        await Shopify.Utils.storeSession(session);
 
-      await verifyRequestMiddleware(ctx, next);
+        const verifyRequestMiddleware = verifyRequest({authRoute});
+        const next = jest.fn();
+        const ctx = createMockContext({
+          url: appUrl(TEST_SHOP),
+          redirect: jest.fn(),
+          headers: {authorization: `Bearer ${jwtToken}`},
+        });
 
-      expect(ctx.redirect).toHaveBeenCalledWith(
-        `${authRoute}?shop=${TEST_SHOP}`,
-      );
+        await verifyRequestMiddleware(ctx, next);
+
+        expect(ctx.redirect).toHaveBeenCalledWith(
+          `${authRoute}?shop=${TEST_SHOP}`,
+        );
+      } else {
+        fail('loadSession did not return a valid session');
+      }
     });
 
     it('returns a header if setting is active', async () => {
@@ -175,26 +188,31 @@ describe('verifyRequest', () => {
       const session = await Shopify.Context.SESSION_STORAGE.loadSession(
         jwtSessionId,
       );
-      session.expires = new Date(Date.now() - 10);
-      await Shopify.Utils.storeSession(session);
 
-      const verifyRequestMiddleware = verifyRequest({returnHeader: true});
-      const ctx = createMockContext({
-        redirect: jest.fn(),
-        headers: {authorization: `Bearer ${jwtToken}`},
-      });
-      const next = jest.fn();
+      if (session) {
+        session.expires = new Date(Date.now() - 10);
+        await Shopify.Utils.storeSession(session);
 
-      await verifyRequestMiddleware(ctx, next);
+        const verifyRequestMiddleware = verifyRequest({returnHeader: true});
+        const ctx = createMockContext({
+          redirect: jest.fn(),
+          headers: {authorization: `Bearer ${jwtToken}`},
+        });
+        const next = jest.fn();
 
-      expect(ctx.redirect).not.toHaveBeenCalled();
-      expect(ctx.response.status).toBe(403);
-      expect(ctx.response.headers).toEqual(
-        expect.objectContaining({
-          [REAUTH_HEADER.toLowerCase()]: '1',
-          [REAUTH_URL_HEADER.toLowerCase()]: `/auth?shop=${TEST_SHOP}`,
-        }),
-      );
+        await verifyRequestMiddleware(ctx, next);
+
+        expect(ctx.redirect).not.toHaveBeenCalled();
+        expect(ctx.response.status).toBe(403);
+        expect(ctx.response.headers).toEqual(
+          expect.objectContaining({
+            [REAUTH_HEADER.toLowerCase()]: '1',
+            [REAUTH_URL_HEADER.toLowerCase()]: `/auth?shop=${TEST_SHOP}`,
+          }),
+        );
+      } else {
+        fail('loadSession did not return a valid session');
+      }
     });
   });
 
@@ -337,6 +355,11 @@ function appUrl(shop?: string) {
 
 async function expireJwtSession(sessionId: string) {
   const session = await Shopify.Context.SESSION_STORAGE.loadSession(sessionId);
-  session.expires = new Date(Date.now() - 60000);
-  await Shopify.Utils.storeSession(session);
+
+  if (session) {
+    session.expires = new Date(Date.now() - 60000);
+    await Shopify.Utils.storeSession(session);
+  } else {
+    throw 'expireJwtSession failed, session was not loaded';
+  }
 }
